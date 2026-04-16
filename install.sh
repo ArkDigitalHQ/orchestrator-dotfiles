@@ -4,9 +4,8 @@ set -euo pipefail
 # ── Orchestrator Supervisor Installer ────────────────────────────────────────
 # Usage (interactive):
 #   bash install.sh
-# Usage (non-interactive / curl|bash / Codespaces):
-#   ANTHROPIC_API_KEY=sk-ant-... bash install.sh
-#   ANTHROPIC_API_KEY=sk-ant-... MACHINE_ID=mybox curl -fsSL .../install.sh | bash
+# Usage (non-interactive / Codespaces):
+#   ANTHROPIC_API_KEY=sk-ant-... bash <(curl -fsSL https://raw.githubusercontent.com/ArkDigitalHQ/orchestrator-dotfiles/main/install.sh)
 
 REPO="https://github.com/ArkDigitalHQ/orchestrator-control.git"
 INSTALL_DIR="$HOME/.orchestrator"
@@ -57,12 +56,10 @@ else
     local current="${!var_name:-}"
 
     if [ -n "$current" ]; then
-      # Already set via environment
       return
     fi
 
     if [ -t 0 ]; then
-      # stdin is a terminal — prompt normally
       if [ -n "$default_val" ]; then
         read -rp "  $prompt_text [$default_val]: " input
         eval "$var_name=\"${input:-$default_val}\""
@@ -71,16 +68,13 @@ else
         eval "$var_name=\"$input\""
       fi
     else
-      # stdin is a pipe — use default or fail
       if [ -n "$default_val" ]; then
         eval "$var_name=\"$default_val\""
       else
         red ""
         red "Non-interactive mode: set $var_name as an environment variable."
         red ""
-        red "  $var_name=your-value bash install.sh"
-        red "  -- or --"
-        red "  $var_name=your-value curl -fsSL .../install.sh | bash"
+        red "  $var_name=your-value bash <(curl -fsSL https://raw.githubusercontent.com/ArkDigitalHQ/orchestrator-dotfiles/main/install.sh)"
         red ""
         exit 1
       fi
@@ -92,7 +86,7 @@ else
   echo ""
 
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-  MACHINE_ID="${MACHINE_ID:-}"
+  MACHINE_ID="${MACHINE_ID:-${CODESPACE_NAME:-}}"
   MAX_BUDGET_USD="${MAX_BUDGET_USD:-}"
   MAX_TURNS="${MAX_TURNS:-}"
 
@@ -100,7 +94,7 @@ else
   [ -z "$ANTHROPIC_API_KEY" ] && { red "ANTHROPIC_API_KEY is required."; exit 1; }
 
   MACHINE_ID_DEFAULT=$(hostname -s 2>/dev/null || echo "machine")
-  prompt_or_env MACHINE_ID "MACHINE_ID" "$MACHINE_ID_DEFAULT"
+  prompt_or_env MACHINE_ID "MACHINE_ID" "${CODESPACE_NAME:-$MACHINE_ID_DEFAULT}"
 
   prompt_or_env MAX_BUDGET_USD "MAX_BUDGET_USD" "5"
   prompt_or_env MAX_TURNS "MAX_TURNS" "40"
@@ -111,7 +105,7 @@ fi
 
 # ── 4. Clone / update repo ────────────────────────────────────────────────────
 echo ""
-if [ -d "$INSTALL_DIR/repo" ]; then
+if [ -d "$INSTALL_DIR/repo/.git" ]; then
   yellow "Updating repo..."
   git -C "$INSTALL_DIR/repo" pull --ff-only
 else
@@ -147,10 +141,22 @@ fi
 
 SUPERVISOR_BIN="$INSTALL_DIR/repo/packages/supervisor/dist/index.js"
 
-# ── 7. Install service ────────────────────────────────────────────────────────
+# ── 7. Stop any existing nohup-launched supervisor ────────────────────────────
+if [ -f "$INSTALL_DIR/supervisor.pid" ]; then
+  OLD_PID=$(cat "$INSTALL_DIR/supervisor.pid")
+  if kill -0 "$OLD_PID" 2>/dev/null; then
+    yellow "Stopping previous supervisor (PID $OLD_PID)..."
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f "$INSTALL_DIR/supervisor.pid"
+fi
+
+# ── 8. Install / start service ────────────────────────────────────────────────
 OS="$(uname -s)"
 
 if [ "$OS" = "Darwin" ]; then
+  # ── macOS: launchd ──────────────────────────────────────────────────────────
   PLIST_DIR="$HOME/Library/LaunchAgents"
   PLIST="$PLIST_DIR/$SERVICE_NAME.plist"
   mkdir -p "$PLIST_DIR"
@@ -173,7 +179,7 @@ if [ "$OS" = "Darwin" ]; then
   <dict>
 $(while IFS='=' read -r k v; do
     [[ "$k" =~ ^#|^$ ]] && continue
-    echo "    <key>$k</key><string>$v</string>"
+    printf "    <key>%s</key><string>%s</string>\n" "$k" "$v"
   done < "$ENV_FILE")
   </dict>
   <key>RunAtLoad</key>
@@ -192,35 +198,58 @@ PLIST
   green "✓ launchd service loaded"
 
 elif [ "$OS" = "Linux" ]; then
-  SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
-  ENV_ARGS=$(while IFS='=' read -r k v; do
-    [[ "$k" =~ ^#|^$ ]] && continue
-    echo "Environment=\"$k=$v\""
-  done < "$ENV_FILE")
+  # ── Linux: try systemd, fall back to nohup ──────────────────────────────────
+  SYSTEMD_STARTED=false
 
-  sudo tee "$SERVICE_FILE" > /dev/null << UNIT
+  # Try user-level systemd first (no sudo needed)
+  if command -v systemctl &>/dev/null && systemctl --user status &>/dev/null 2>&1; then
+    SYSTEMD_DIR="$HOME/.config/systemd/user"
+    mkdir -p "$SYSTEMD_DIR"
+    cat > "$SYSTEMD_DIR/${SERVICE_NAME}.service" << UNIT
 [Unit]
 Description=Orchestrator Supervisor
 After=network.target
 
 [Service]
 Type=simple
-User=$USER
-ExecStart=$(which node) $SUPERVISOR_BIN
-$ENV_ARGS
-Restart=always
-RestartSec=5
+EnvironmentFile=${ENV_FILE}
+ExecStart=$(which node) ${SUPERVISOR_BIN}
+Restart=on-failure
+RestartSec=5s
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 UNIT
+    if systemctl --user daemon-reload && systemctl --user enable --now "${SERVICE_NAME}.service"; then
+      green "✓ systemd user service enabled"
+      SYSTEMD_STARTED=true
+    fi
+  fi
 
-  sudo systemctl daemon-reload
-  sudo systemctl enable "$SERVICE_NAME"
-  sudo systemctl restart "$SERVICE_NAME"
-  green "✓ systemd service enabled"
+  # Fall back to nohup (works in Codespaces, Docker, and any non-systemd env)
+  if [ "$SYSTEMD_STARTED" = false ]; then
+    yellow "systemd not available — starting supervisor with nohup"
+    # Load env vars from file
+    set -o allexport
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +o allexport
+
+    nohup node "$SUPERVISOR_BIN" \
+      >> "$INSTALL_DIR/supervisor.log" 2>&1 &
+    echo $! > "$INSTALL_DIR/supervisor.pid"
+    sleep 2
+
+    if kill -0 "$(cat "$INSTALL_DIR/supervisor.pid")" 2>/dev/null; then
+      green "✓ Supervisor running (PID $(cat "$INSTALL_DIR/supervisor.pid"))"
+    else
+      red "Supervisor failed to start. Last log output:"
+      tail -20 "$INSTALL_DIR/supervisor.log" || true
+      exit 1
+    fi
+  fi
 
 else
   red "Unsupported OS: $OS"
@@ -231,7 +260,7 @@ echo ""
 green "=== Installation complete! ==="
 echo ""
 echo "  Machine ID : $(grep MACHINE_ID "$ENV_FILE" | cut -d= -f2)"
-echo "  Logs       : $INSTALL_DIR/supervisor.log"
+echo "  Logs       : tail -f $INSTALL_DIR/supervisor.log"
 echo "  Config     : $ENV_FILE"
 echo "  Dashboard  : https://orchestrator-dashboard-flostack-ai.vercel.app"
 echo ""
