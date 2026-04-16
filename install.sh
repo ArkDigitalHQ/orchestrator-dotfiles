@@ -214,8 +214,10 @@ elif [ "$OS" = "Linux" ]; then
   echo $! > "$INSTALL_DIR/supervisor.pid"
   sleep 2
 
-  if kill -0 "$(cat "$INSTALL_DIR/supervisor.pid")" 2>/dev/null; then
-    green "✓ Supervisor running (PID $(cat \"$INSTALL_DIR/supervisor.pid\"))"
+  SUPERVISOR_PID=$(cat "$INSTALL_DIR/supervisor.pid" 2>/dev/null)
+  if [ -n "$SUPERVISOR_PID" ] && kill -0 "$SUPERVISOR_PID" 2>/dev/null; then
+    SUPERVISOR_PID=$(cat "$INSTALL_DIR/supervisor.pid" 2>/dev/null || echo "unknown")
+    green "✓ Supervisor running (PID $SUPERVISOR_PID)"
   else
     red "Supervisor failed to start. Check logs:"
     tail -20 "$INSTALL_DIR/supervisor.log" || true
