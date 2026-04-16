@@ -227,9 +227,15 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 UNIT
-    if systemctl --user daemon-reload && systemctl --user enable --now "${SERVICE_NAME}.service"; then
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable --now "${SERVICE_NAME}.service" 2>/dev/null || true
+    sleep 2
+    # Verify the service is actually running — systemctl may succeed without systemd daemon
+    if systemctl --user is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
       green "✓ systemd user service enabled"
       SYSTEMD_STARTED=true
+    else
+      yellow "systemd reported success but service is not active — falling back to nohup"
     fi
   fi
 
