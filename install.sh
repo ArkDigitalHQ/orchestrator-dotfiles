@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Redirect stdin from /dev/tty so prompts work even when piped via curl | bash
-exec < /dev/tty
-
 # ── Orchestrator Supervisor Installer ────────────────────────────────────────
+# Usage (interactive):
+#   bash install.sh
+# Usage (non-interactive / curl|bash / Codespaces):
+#   ANTHROPIC_API_KEY=sk-ant-... bash install.sh
+#   ANTHROPIC_API_KEY=sk-ant-... MACHINE_ID=mybox curl -fsSL .../install.sh | bash
+
 REPO="https://github.com/ArkDigitalHQ/orchestrator-control.git"
 INSTALL_DIR="$HOME/.orchestrator"
 SERVICE_NAME="com.orchestrator.supervisor"
@@ -23,7 +26,6 @@ if ! command -v node &>/dev/null; then
   red "Node.js not found. Install Node.js $NODE_MIN+ from https://nodejs.org and re-run."
   exit 1
 fi
-
 NODE_VER=$(node -e "process.stdout.write(process.versions.node.split('.')[0])")
 if [ "$NODE_VER" -lt "$NODE_MIN" ]; then
   red "Node.js $NODE_MIN+ required (found $NODE_VER). Please upgrade."
@@ -42,29 +44,69 @@ green "✓ pnpm $(pnpm --version)"
 ENV_FILE="$INSTALL_DIR/.env"
 
 if [ -f "$ENV_FILE" ]; then
-  yellow "Existing install found at $INSTALL_DIR — updating code only."
+  yellow "Existing install found — updating code only."
   UPDATE_ONLY=true
 else
   UPDATE_ONLY=false
+
+  # Helper: prompt interactively if stdin is a terminal, else require env var
+  prompt_or_env() {
+    local var_name="$1"
+    local prompt_text="$2"
+    local default_val="${3:-}"
+    local current="${!var_name:-}"
+
+    if [ -n "$current" ]; then
+      # Already set via environment
+      return
+    fi
+
+    if [ -t 0 ]; then
+      # stdin is a terminal — prompt normally
+      if [ -n "$default_val" ]; then
+        read -rp "  $prompt_text [$default_val]: " input
+        eval "$var_name=\"${input:-$default_val}\""
+      else
+        read -rp "  $prompt_text: " input
+        eval "$var_name=\"$input\""
+      fi
+    else
+      # stdin is a pipe — use default or fail
+      if [ -n "$default_val" ]; then
+        eval "$var_name=\"$default_val\""
+      else
+        red ""
+        red "Non-interactive mode: set $var_name as an environment variable."
+        red ""
+        red "  $var_name=your-value bash install.sh"
+        red "  -- or --"
+        red "  $var_name=your-value curl -fsSL .../install.sh | bash"
+        red ""
+        exit 1
+      fi
+    fi
+  }
+
   echo ""
-  bold "Enter your configuration:"
+  bold "Configuration:"
   echo ""
 
-  read -rp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY
-  [ -z "$ANTHROPIC_API_KEY" ] && { red "ANTHROPIC_API_KEY is required"; exit 1; }
+  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+  MACHINE_ID="${MACHINE_ID:-}"
+  MAX_BUDGET_USD="${MAX_BUDGET_USD:-}"
+  MAX_TURNS="${MAX_TURNS:-}"
 
-  MACHINE_ID_DEFAULT=$(hostname -s)
-  read -rp "  MACHINE_ID [$MACHINE_ID_DEFAULT]: " MACHINE_ID
-  MACHINE_ID="${MACHINE_ID:-$MACHINE_ID_DEFAULT}"
+  prompt_or_env ANTHROPIC_API_KEY "ANTHROPIC_API_KEY"
+  [ -z "$ANTHROPIC_API_KEY" ] && { red "ANTHROPIC_API_KEY is required."; exit 1; }
+
+  MACHINE_ID_DEFAULT=$(hostname -s 2>/dev/null || echo "machine")
+  prompt_or_env MACHINE_ID "MACHINE_ID" "$MACHINE_ID_DEFAULT"
+
+  prompt_or_env MAX_BUDGET_USD "MAX_BUDGET_USD" "5"
+  prompt_or_env MAX_TURNS "MAX_TURNS" "40"
 
   CONTROL_PLANE_URL="wss://control-plane-production-89e4.up.railway.app"
   SHARED_SECRET="5c816a1149107258cc44b7cf71b62176f1e9ddf7c144faf95be47bd28a7103b7"
-
-  read -rp "  MAX_BUDGET_USD [5]: " MAX_BUDGET_USD
-  MAX_BUDGET_USD="${MAX_BUDGET_USD:-5}"
-
-  read -rp "  MAX_TURNS [40]: " MAX_TURNS
-  MAX_TURNS="${MAX_TURNS:-40}"
 fi
 
 # ── 4. Clone / update repo ────────────────────────────────────────────────────
@@ -89,6 +131,7 @@ green "✓ Build complete"
 
 # ── 6. Write .env ─────────────────────────────────────────────────────────────
 if [ "$UPDATE_ONLY" = false ]; then
+  mkdir -p "$INSTALL_DIR"
   cat > "$ENV_FILE" << ENV
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 MACHINE_ID=$MACHINE_ID
@@ -146,7 +189,7 @@ $(while IFS='=' read -r k v; do
 PLIST
 
   launchctl load "$PLIST"
-  green "✓ launchd service loaded: $SERVICE_NAME"
+  green "✓ launchd service loaded"
 
 elif [ "$OS" = "Linux" ]; then
   SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
@@ -177,7 +220,7 @@ UNIT
   sudo systemctl daemon-reload
   sudo systemctl enable "$SERVICE_NAME"
   sudo systemctl restart "$SERVICE_NAME"
-  green "✓ systemd service enabled: $SERVICE_NAME"
+  green "✓ systemd service enabled"
 
 else
   red "Unsupported OS: $OS"
@@ -190,6 +233,5 @@ echo ""
 echo "  Machine ID : $(grep MACHINE_ID "$ENV_FILE" | cut -d= -f2)"
 echo "  Logs       : $INSTALL_DIR/supervisor.log"
 echo "  Config     : $ENV_FILE"
-echo ""
 echo "  Dashboard  : https://orchestrator-dashboard-flostack-ai.vercel.app"
 echo ""
