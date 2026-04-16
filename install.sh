@@ -203,11 +203,10 @@ PLIST
   green "✓ launchd service loaded"
 
 elif [ "$OS" = "Linux" ]; then
-  # ── Linux: try systemd, fall back to nohup ──────────────────────────────────
+  # ── Linux: use systemd only if it is PID 1, otherwise nohup ─────────────────
   SYSTEMD_STARTED=false
 
-  # Try user-level systemd first (no sudo needed)
-  if command -v systemctl &>/dev/null && systemctl --user status &>/dev/null 2>&1; then
+  if [ "$(cat /proc/1/comm 2>/dev/null)" = "systemd" ] && command -v systemctl &>/dev/null; then
     SYSTEMD_DIR="$HOME/.config/systemd/user"
     mkdir -p "$SYSTEMD_DIR"
     cat > "$SYSTEMD_DIR/${SERVICE_NAME}.service" << UNIT
@@ -227,21 +226,15 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 UNIT
-    systemctl --user daemon-reload 2>/dev/null || true
-    systemctl --user enable --now "${SERVICE_NAME}.service" 2>/dev/null || true
-    sleep 2
-    # Verify the service is actually running — systemctl may succeed without systemd daemon
-    if systemctl --user is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+    if systemctl --user daemon-reload && systemctl --user enable --now "${SERVICE_NAME}.service"; then
       green "✓ systemd user service enabled"
       SYSTEMD_STARTED=true
-    else
-      yellow "systemd reported success but service is not active — falling back to nohup"
     fi
   fi
 
-  # Fall back to nohup (works in Codespaces, Docker, and any non-systemd env)
+  # Fall back to nohup (Codespaces, Docker, and any non-systemd env)
   if [ "$SYSTEMD_STARTED" = false ]; then
-    yellow "systemd not available — starting supervisor with nohup"
+    yellow "systemd not active (PID 1 is $(cat /proc/1/comm 2>/dev/null || echo unknown)) — using nohup"
     # Load env vars from file
     set -o allexport
     # shellcheck disable=SC1090
