@@ -111,7 +111,12 @@ if [ -d "$INSTALL_DIR/repo/.git" ]; then
 else
   yellow "Cloning orchestrator-control..."
   mkdir -p "$INSTALL_DIR"
-  git clone --depth 1 "$REPO" "$INSTALL_DIR/repo"
+  # Use GITHUB_TOKEN if available (set automatically in Codespaces)
+  CLONE_URL="$REPO"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/ArkDigitalHQ/orchestrator-control.git"
+  fi
+  git clone --depth 1 "$CLONE_URL" "$INSTALL_DIR/repo"
 fi
 green "✓ Repo ready"
 
