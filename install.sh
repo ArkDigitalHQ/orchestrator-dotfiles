@@ -50,20 +50,20 @@ else
   bold "Enter your configuration:"
   echo ""
 
-  read -rp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY
+  read -rp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY </dev/tty
   [ -z "$ANTHROPIC_API_KEY" ] && { red "ANTHROPIC_API_KEY is required"; exit 1; }
 
   MACHINE_ID_DEFAULT=$(hostname -s)
-  read -rp "  MACHINE_ID [$MACHINE_ID_DEFAULT]: " MACHINE_ID
+  read -rp "  MACHINE_ID [$MACHINE_ID_DEFAULT]: " MACHINE_ID </dev/tty
   MACHINE_ID="${MACHINE_ID:-$MACHINE_ID_DEFAULT}"
 
   CONTROL_PLANE_URL="wss://control-plane-production-89e4.up.railway.app"
   SHARED_SECRET="5c816a1149107258cc44b7cf71b62176f1e9ddf7c144faf95be47bd28a7103b7"
 
-  read -rp "  MAX_BUDGET_USD [5]: " MAX_BUDGET_USD
+  read -rp "  MAX_BUDGET_USD [5]: " MAX_BUDGET_USD </dev/tty
   MAX_BUDGET_USD="${MAX_BUDGET_USD:-5}"
 
-  read -rp "  MAX_TURNS [40]: " MAX_TURNS
+  read -rp "  MAX_TURNS [40]: " MAX_TURNS </dev/tty
   MAX_TURNS="${MAX_TURNS:-40}"
 fi
 
