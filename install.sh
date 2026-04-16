@@ -203,58 +203,24 @@ PLIST
   green "✓ launchd service loaded"
 
 elif [ "$OS" = "Linux" ]; then
-  # ── Linux: use systemd only if it is PID 1, otherwise nohup ─────────────────
-  SYSTEMD_STARTED=false
+  # ── Linux: always use nohup (systemd is unavailable/stubbed in Codespaces) ──
+  yellow "Starting supervisor with nohup..."
+  set -o allexport
+  source "$ENV_FILE"
+  set +o allexport
 
-  if [ "$(cat /proc/1/comm 2>/dev/null)" = "systemd" ] && command -v systemctl &>/dev/null; then
-    SYSTEMD_DIR="$HOME/.config/systemd/user"
-    mkdir -p "$SYSTEMD_DIR"
-    cat > "$SYSTEMD_DIR/${SERVICE_NAME}.service" << UNIT
-[Unit]
-Description=Orchestrator Supervisor
-After=network.target
+  nohup node "$SUPERVISOR_BIN" \
+    >> "$INSTALL_DIR/supervisor.log" 2>&1 &
+  echo $! > "$INSTALL_DIR/supervisor.pid"
+  sleep 2
 
-[Service]
-Type=simple
-EnvironmentFile=${ENV_FILE}
-ExecStart=$(which node) ${SUPERVISOR_BIN}
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=default.target
-UNIT
-    if systemctl --user daemon-reload && systemctl --user enable --now "${SERVICE_NAME}.service"; then
-      green "✓ systemd user service enabled"
-      SYSTEMD_STARTED=true
-    fi
+  if kill -0 "$(cat "$INSTALL_DIR/supervisor.pid")" 2>/dev/null; then
+    green "✓ Supervisor running (PID $(cat \"$INSTALL_DIR/supervisor.pid\"))"
+  else
+    red "Supervisor failed to start. Check logs:"
+    tail -20 "$INSTALL_DIR/supervisor.log" || true
+    exit 1
   fi
-
-  # Fall back to nohup (Codespaces, Docker, and any non-systemd env)
-  if [ "$SYSTEMD_STARTED" = false ]; then
-    yellow "systemd not active (PID 1 is $(cat /proc/1/comm 2>/dev/null || echo unknown)) — using nohup"
-    # Load env vars from file
-    set -o allexport
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +o allexport
-
-    nohup node "$SUPERVISOR_BIN" \
-      >> "$INSTALL_DIR/supervisor.log" 2>&1 &
-    echo $! > "$INSTALL_DIR/supervisor.pid"
-    sleep 2
-
-    if kill -0 "$(cat "$INSTALL_DIR/supervisor.pid")" 2>/dev/null; then
-      green "✓ Supervisor running (PID $(cat "$INSTALL_DIR/supervisor.pid"))"
-    else
-      red "Supervisor failed to start. Last log output:"
-      tail -20 "$INSTALL_DIR/supervisor.log" || true
-      exit 1
-    fi
-  fi
-
 else
   red "Unsupported OS: $OS"
   exit 1
