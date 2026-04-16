@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── Orchestrator Supervisor Installer ────────────────────────────────────────
-# Installs the supervisor as a background service on macOS (launchd) or
-# Linux (systemd). Run as your normal user — sudo only used when needed.
+# Redirect stdin from /dev/tty so prompts work even when piped via curl | bash
+exec < /dev/tty
 
+# ── Orchestrator Supervisor Installer ────────────────────────────────────────
 REPO="https://github.com/ArkDigitalHQ/orchestrator-control.git"
 INSTALL_DIR="$HOME/.orchestrator"
 SERVICE_NAME="com.orchestrator.supervisor"
@@ -50,20 +50,20 @@ else
   bold "Enter your configuration:"
   echo ""
 
-  read -rp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY </dev/tty
+  read -rp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY
   [ -z "$ANTHROPIC_API_KEY" ] && { red "ANTHROPIC_API_KEY is required"; exit 1; }
 
   MACHINE_ID_DEFAULT=$(hostname -s)
-  read -rp "  MACHINE_ID [$MACHINE_ID_DEFAULT]: " MACHINE_ID </dev/tty
+  read -rp "  MACHINE_ID [$MACHINE_ID_DEFAULT]: " MACHINE_ID
   MACHINE_ID="${MACHINE_ID:-$MACHINE_ID_DEFAULT}"
 
   CONTROL_PLANE_URL="wss://control-plane-production-89e4.up.railway.app"
   SHARED_SECRET="5c816a1149107258cc44b7cf71b62176f1e9ddf7c144faf95be47bd28a7103b7"
 
-  read -rp "  MAX_BUDGET_USD [5]: " MAX_BUDGET_USD </dev/tty
+  read -rp "  MAX_BUDGET_USD [5]: " MAX_BUDGET_USD
   MAX_BUDGET_USD="${MAX_BUDGET_USD:-5}"
 
-  read -rp "  MAX_TURNS [40]: " MAX_TURNS </dev/tty
+  read -rp "  MAX_TURNS [40]: " MAX_TURNS
   MAX_TURNS="${MAX_TURNS:-40}"
 fi
 
@@ -111,8 +111,6 @@ if [ "$OS" = "Darwin" ]; then
   PLIST_DIR="$HOME/Library/LaunchAgents"
   PLIST="$PLIST_DIR/$SERVICE_NAME.plist"
   mkdir -p "$PLIST_DIR"
-
-  # Stop existing if running
   launchctl unload "$PLIST" 2>/dev/null || true
 
   cat > "$PLIST" << PLIST
@@ -189,7 +187,7 @@ fi
 echo ""
 green "=== Installation complete! ==="
 echo ""
-echo "  Machine ID : $( [ "$UPDATE_ONLY" = false ] && echo "$MACHINE_ID" || grep MACHINE_ID "$ENV_FILE" | cut -d= -f2)"
+echo "  Machine ID : $(grep MACHINE_ID "$ENV_FILE" | cut -d= -f2)"
 echo "  Logs       : $INSTALL_DIR/supervisor.log"
 echo "  Config     : $ENV_FILE"
 echo ""
