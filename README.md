@@ -1,45 +1,50 @@
 # orchestrator-dotfiles
 
-Install scripts for the Orchestrator Supervisor — the agent that runs on any machine you want to control from the dashboard.
+Install scripts for the Orchestrator Supervisor — runs a Claude agent on any machine and connects it to the dashboard.
 
-## Quick install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ArkDigitalHQ/orchestrator-dotfiles/main/install.sh | bash
-```
-
-Or clone and run locally:
+## Install in a Codespace (or any Linux machine)
 
 ```bash
-git clone https://github.com/ArkDigitalHQ/orchestrator-dotfiles.git
-cd orchestrator-dotfiles
-./install.sh
+ANTHROPIC_API_KEY=sk-ant-... bash <(curl -fsSL https://raw.githubusercontent.com/ArkDigitalHQ/orchestrator-dotfiles/main/install.sh)
 ```
 
-## What it does
+> **Note:** Use `bash <(curl ...)` — not `curl ... | bash`. The parentheses form is required because the script reads interactive input.
 
-1. Checks Node.js 22+ is installed
-2. Prompts for your `ANTHROPIC_API_KEY` and a machine name
-3. Clones and builds `orchestrator-control/packages/supervisor`
-4. Installs a background service (launchd on macOS, systemd on Linux)
-5. The supervisor connects to the control plane and appears in the dashboard
+The script will prompt for a machine name and budget limits (press Enter to accept defaults), then:
+
+1. Clone and build the supervisor from [orchestrator-control](https://github.com/ArkDigitalHQ/orchestrator-control)
+2. Write credentials to `~/.orchestrator/.env`
+3. Start the supervisor in the background
+
+Your machine appears in the dashboard within a few seconds.
+
+## Dashboard
+
+**https://orchestrator-dashboard-flostack-ai.vercel.app**
+
+## Check logs
+
+```bash
+tail -f ~/.orchestrator/supervisor.log
+```
 
 ## Update
 
-Re-run `install.sh` on a machine that already has the supervisor — it pulls the latest code and rebuilds without touching your `.env`.
+Re-run the same install command — it pulls the latest code and restarts without touching your `.env`.
+
+## Stop
+
+```bash
+kill $(cat ~/.orchestrator/supervisor.pid)
+```
 
 ## Uninstall
 
 ```bash
-./uninstall.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/ArkDigitalHQ/orchestrator-dotfiles/main/uninstall.sh)
 ```
 
 ## Requirements
 
 - Node.js 22+
-- macOS or Linux
 - An Anthropic API key
-
-## Dashboard
-
-https://orchestrator-dashboard-flostack-ai.vercel.app
